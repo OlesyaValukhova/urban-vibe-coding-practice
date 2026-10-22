@@ -168,10 +168,6 @@ for column, name in [("morphotype", "Морфотип (Spacematrix)"),
                      ("land_use", "Land use")]:
     add_categorical_layer(results, column, name)
 
-for st, gdf in provision.items():
-    add_numeric_layer(gdf, "provision_strong",
-                      f"Обеспеченность: {st}", "RdYlGn")
-
 # контуры/подложка
 if boundary is not None:
     folium.GeoJson(
@@ -196,6 +192,114 @@ if roads is not None and len(roads):
 
 folium.LayerControl(collapsed=False).add_to(m)
 map_html = m.get_root().render()
+
+
+# --------------------------------------------------------------- карта обеспеченности
+def build_provision_map():
+    """Отдельная карта: один слой кварталов, сервис выбирается из списка."""
+    if not provision:
+        return None
+
+    prov_map = folium.Map(
+        location=[center.y, center.x], zoom_start=14,
+        tiles="CartoDB positron", control_scale=True,
+    )
+
+    if boundary is not None:
+        folium.GeoJson(
+            json.loads(boundary.to_crs(4326).to_json()),
+            name="Граница",
+            style_function=lambda f: {
+                "fill": False, "color": "#111", "weight": 2},
+        ).add_to(prov_map)
+
+    # единая шкала 0..1 для всех сервисов, чтобы значения были сравнимы
+    colors = [mcolors.to_hex(colormaps["RdYlGn"](x))
+              for x in np.linspace(0.05, 0.95, 7)]
+    colormap = bcm.LinearColormap(colors=colors, vmin=0.0, vmax=1.0)
+
+    services = [st for st, gdf in provision.items()
+                if "provision_strong" in gdf.columns]
+    if not services:
+        return None
+
+    # один FeatureCollection: геометрия кварталов + значение и цвет по каждому сервису
+    fc = json.loads(results.to_crs(4326)[["geometry"]].to_json())
+    values = {
+        st: provision[st]["provision_strong"].reindex(results.index)
+        for st in services
+    }
+
+    for i, feature in enumerate(fc["features"]):
+        props = feature["properties"]
+        for st in services:
+            v = values[st].iloc[i] if i < len(values[st]) else None
+            if v is None or pd.isna(v):
+                props[st] = None
+                props[f"c_{st}"] = "#e0e0e0"
+            else:
+                props[st] = round(float(v), 3)
+                props[f"c_{st}"] = colormap(float(v))
+
+    first = services[0]
+    gj = folium.GeoJson(
+        fc,
+        name="Обеспеченность",
+        style_function=lambda f: {
+            "fillColor": f["properties"].get(f"c_{first}", "#e0e0e0"),
+            "color": "#7a7a7a", "weight": 0.4, "fillOpacity": 0.75,
+        },
+    )
+    gj.add_to(prov_map)
+
+    options = "".join(f'<option value="{st}">{st}</option>'
+                      for st in services)
+    control_html = f"""
+    <div style="position:absolute;top:12px;right:12px;z-index:9999;background:#fff;
+         padding:10px 12px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.18);
+         font:13px/1.4 -apple-system,'Segoe UI',Arial,sans-serif">
+      <div style="font-weight:600;margin-bottom:6px">Обеспеченность сервисом</div>
+      <select id="prov-select" style="width:190px;padding:4px">{options}</select>
+      <div style="margin-top:8px;height:10px;border-radius:3px;
+           background:linear-gradient(to right,{colors[0]},{colors[3]},{colors[-1]})"></div>
+      <div style="display:flex;justify-content:space-between;color:#5b6b7a;font-size:11px">
+        <span>0 — нет доступа</span><span>1 — норматив</span>
+      </div>
+    </div>
+    """
+    prov_map.get_root().html.add_child(folium.Element(control_html))
+
+    layer_name = gj.get_name()
+    script = f"""
+    <script>
+    window.addEventListener('load', function () {{
+      var layer = window["{layer_name}"];
+      var sel = document.getElementById('prov-select');
+
+      function apply(service) {{
+        layer.eachLayer(function (l) {{
+          var p = l.feature.properties;
+          l.setStyle({{ fillColor: p['c_' + service] || '#e0e0e0' }});
+          var v = p[service];
+          var text = (v === null || v === undefined)
+            ? service + ': нет данных'
+            : service + ': ' + Number(v).toFixed(2);
+          l.unbindTooltip();
+          l.bindTooltip(text, {{ sticky: true }});
+        }});
+      }}
+
+      sel.addEventListener('change', function () {{ apply(sel.value); }});
+      apply(sel.value);
+    }});
+    </script>
+    """
+    prov_map.get_root().html.add_child(folium.Element(script))
+
+    return prov_map.get_root().render()
+
+
+provision_html = build_provision_map()
 
 
 # --------------------------------------------------------------- данные для панелей
@@ -355,6 +459,20 @@ charts_js = json.dumps({
 }, ensure_ascii=False)
 
 iframe = html_lib.escape(map_html, quote=True)
+prov_iframe = html_lib.escape(provision_html, quote=True) if provision_html else None
+
+prov_card = ""
+if prov_iframe:
+    prov_card = f"""
+  <div class="card">
+    <h2>Обеспеченность сервисами</h2>
+    <p style="color:#5b6b7a;font-size:14px;margin-top:-6px">
+      Отдельная карта: выберите сервис в списке в правом верхнем углу.
+      Шкала общая для всех сервисов: 0 — нет доступа в пределах норматива,
+      1 — норматив выполнен.</p>
+    <iframe srcdoc="{prov_iframe}"></iframe>
+  </div>
+"""
 
 page = f"""<!DOCTYPE html>
 <html lang="ru">
@@ -408,6 +526,7 @@ page = f"""<!DOCTYPE html>
       чтобы увидеть значение показателя.</p>
     <iframe srcdoc="{iframe}"></iframe>
   </div>
+{prov_card}
 
   <div class="card">
     <h2>Графики</h2>
