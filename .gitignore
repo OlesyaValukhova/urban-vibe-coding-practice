@@ -42,3 +42,12 @@ ENV/
 
 # PyCharm env
 .idea
+
+# VS Code
+.vscode/
+
+# OSMnx cache в корне проекта
+/cache/
+
+# Кэш геокодера OSMnx в папках с данными
+examples/data/*/osm_cache/
