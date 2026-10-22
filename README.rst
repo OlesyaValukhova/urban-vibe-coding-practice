@@ -97,12 +97,6 @@ You can contact me:
 
 Also, you are welcomed to the `issues <./issues>`__ section!
 
-Publications
-------------
-
--  `My publication name from scholar or something <https://scholar.google.com/>`__
--  ...
-
 .. |Documentation Status| image:: https://github.com/vasilstar97/python-package-boilerplate/actions/workflows/documentation.yml/badge.svg?branch=main
    :target: https://vasilstar97.github.io/python-package-boilerplate/
 .. |PythonVersion| image:: https://img.shields.io/badge/python-3.10-blue
